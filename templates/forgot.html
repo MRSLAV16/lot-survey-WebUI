@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<title>Reset Password</title>
+
+<link
+href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+rel="stylesheet"
+>
+
+</head>
+
+<body style="background:#020617">
+
+<div class="container vh-100 d-flex justify-content-center align-items-center">
+
+<div class="card bg-dark text-light" style="width:360px">
+
+<div class="card-body">
+
+<h4 class="text-center mb-3">
+Reset Password
+</h4>
+
+<form method="POST">
+
+<div class="mb-3">
+
+<label class="form-label">Username</label>
+
+<input type="text"
+name="username"
+class="form-control bg-black text-light border-secondary"
+required>
+
+</div>
+
+<div class="mb-3">
+
+<label class="form-label">New Password</label>
+
+<input type="password"
+name="password"
+class="form-control bg-black text-light border-secondary"
+required>
+
+</div>
+
+<button class="btn btn-warning w-100">
+Reset Password
+</button>
+
+</form>
+
+<div class="text-center mt-3">
+<a href="/login" class="text-secondary">
+Back to login
+</a>
+</div>
+
+</div>
+
+</div>
+
+</div>
+
+</body>
+</html>

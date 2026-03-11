@@ -5,21 +5,28 @@ import math
 from pyproj import Transformer
 from werkzeug.security import generate_password_hash, check_password_hash
 
-
 app = Flask(__name__)
 app.secret_key = "replace_with_secure_key"
+
+DB = "users.db"
 
 transformer = Transformer.from_crs("EPSG:4390", "EPSG:4326", always_xy=True)
 
 LAT_CORR = 0.000033
 LON_CORR = 0.000044
 
-DB = "users.db"
+
+# ---------------------------
+# DATABASE
+# ---------------------------
+
+def get_db():
+    return sqlite3.connect(DB)
 
 
 def init_db():
 
-    conn = sqlite3.connect(DB)
+    conn = get_db()
     cur = conn.cursor()
 
     cur.execute("""
@@ -36,6 +43,10 @@ def init_db():
 
 init_db()
 
+
+# ---------------------------
+# UTILITY FUNCTIONS
+# ---------------------------
 
 def haversine(p1, p2):
 
@@ -68,6 +79,10 @@ def bearing(p1, p2):
     return (brng + 360) % 360
 
 
+# ---------------------------
+# AUTH ROUTES
+# ---------------------------
+
 @app.route("/login", methods=["GET","POST"])
 def login():
 
@@ -76,7 +91,7 @@ def login():
         username = request.form.get("username")
         password = request.form.get("password")
 
-        conn = sqlite3.connect(DB)
+        conn = get_db()
         cur = conn.cursor()
 
         cur.execute("SELECT password FROM users WHERE username=?", (username,))
@@ -106,7 +121,7 @@ def register():
 
         try:
 
-            conn = sqlite3.connect(DB)
+            conn = get_db()
             cur = conn.cursor()
 
             cur.execute(
@@ -120,10 +135,35 @@ def register():
             return redirect(url_for("login"))
 
         except:
-
             return render_template("register.html", error="Username exists")
 
     return render_template("register.html")
+
+
+@app.route("/forgot", methods=["GET","POST"])
+def forgot():
+
+    if request.method == "POST":
+
+        username = request.form.get("username")
+        new_password = request.form.get("password")
+
+        hashed = generate_password_hash(new_password)
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute(
+            "UPDATE users SET password=? WHERE username=?",
+            (hashed, username)
+        )
+
+        conn.commit()
+        conn.close()
+
+        return redirect(url_for("login"))
+
+    return render_template("forgot.html")
 
 
 @app.route("/logout")
@@ -133,6 +173,10 @@ def logout():
     return redirect(url_for("login"))
 
 
+# ---------------------------
+# MAP PAGE
+# ---------------------------
+
 @app.route("/")
 def map_page():
 
@@ -141,6 +185,10 @@ def map_page():
 
     return render_template("map.html", username=session["user"])
 
+
+# ---------------------------
+# CSV UPLOAD
+# ---------------------------
 
 @app.route("/upload_csv", methods=["POST"])
 def upload_csv():
