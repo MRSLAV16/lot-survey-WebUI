@@ -1,72 +1,60 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
-import csv
 import sqlite3
+import csv
 import math
 from pyproj import Transformer
 from werkzeug.security import generate_password_hash, check_password_hash
 
-
 app = Flask(__name__)
-app.secret_key = "replace_with_secure_key"
+app.secret_key = "dev_key"
+
+DB = "users.db"
 
 transformer = Transformer.from_crs("EPSG:4390", "EPSG:4326", always_xy=True)
 
 LAT_CORR = 0.000033
 LON_CORR = 0.000044
 
-DB = "users.db"
 
+# --------------------------
+# DATABASE
+# --------------------------
 
 def init_db():
 
-    conn = sqlite3.connect(DB)
-    cur = conn.cursor()
+    with sqlite3.connect(DB) as conn:
+        cur = conn.cursor()
 
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT
-    )
-    """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE,
+            password TEXT
+        )
+        """)
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 init_db()
 
 
-def haversine(p1, p2):
+def get_user_password(username):
 
-    R = 6371000
+    with sqlite3.connect(DB) as conn:
+        cur = conn.cursor()
 
-    lat1 = math.radians(p1[1])
-    lat2 = math.radians(p2[1])
+        cur.execute(
+            "SELECT password FROM users WHERE username=?",
+            (username,)
+        )
 
-    dlat = lat2 - lat1
-    dlon = math.radians(p2[0] - p1[0])
-
-    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-    return R * c
+        return cur.fetchone()
 
 
-def bearing(p1, p2):
-
-    lat1 = math.radians(p1[1])
-    lat2 = math.radians(p2[1])
-
-    dlon = math.radians(p2[0] - p1[0])
-
-    y = math.sin(dlon) * math.cos(lat2)
-    x = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
-
-    brng = math.degrees(math.atan2(y, x))
-
-    return (brng + 360) % 360
-
+# --------------------------
+# AUTH
+# --------------------------
 
 @app.route("/login", methods=["GET","POST"])
 def login():
@@ -76,13 +64,10 @@ def login():
         username = request.form.get("username")
         password = request.form.get("password")
 
-        conn = sqlite3.connect(DB)
-        cur = conn.cursor()
+        if not username or not password:
+            return render_template("login.html", error="Missing fields")
 
-        cur.execute("SELECT password FROM users WHERE username=?", (username,))
-        row = cur.fetchone()
-
-        conn.close()
+        row = get_user_password(username)
 
         if row and check_password_hash(row[0], password):
 
@@ -102,28 +87,61 @@ def register():
         username = request.form.get("username")
         password = request.form.get("password")
 
+        if not username or not password:
+            return render_template("register.html", error="Missing fields")
+
         hashed = generate_password_hash(password)
 
         try:
 
-            conn = sqlite3.connect(DB)
-            cur = conn.cursor()
+            with sqlite3.connect(DB) as conn:
+                cur = conn.cursor()
 
-            cur.execute(
-                "INSERT INTO users(username,password) VALUES(?,?)",
-                (username, hashed)
-            )
+                cur.execute(
+                    "INSERT INTO users(username,password) VALUES(?,?)",
+                    (username, hashed)
+                )
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             return redirect(url_for("login"))
 
-        except:
+        except sqlite3.IntegrityError:
 
             return render_template("register.html", error="Username exists")
 
     return render_template("register.html")
+
+
+@app.route("/forgot", methods=["GET","POST"])
+def forgot():
+
+    if request.method == "POST":
+
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if not username or not password:
+            return render_template("forgot.html", error="Missing fields")
+
+        hashed = generate_password_hash(password)
+
+        with sqlite3.connect(DB) as conn:
+            cur = conn.cursor()
+
+            cur.execute(
+                "UPDATE users SET password=? WHERE username=?",
+                (hashed, username)
+            )
+
+            if cur.rowcount == 0:
+                return render_template("forgot.html", error="User not found")
+
+            conn.commit()
+
+        return redirect(url_for("login"))
+
+    return render_template("forgot.html")
 
 
 @app.route("/logout")
@@ -133,6 +151,10 @@ def logout():
     return redirect(url_for("login"))
 
 
+# --------------------------
+# MAP PAGE
+# --------------------------
+
 @app.route("/")
 def map_page():
 
@@ -141,6 +163,45 @@ def map_page():
 
     return render_template("map.html", username=session["user"])
 
+
+# --------------------------
+# MATH
+# --------------------------
+
+def haversine(p1,p2):
+
+    R = 6371000
+
+    lat1 = math.radians(p1[1])
+    lat2 = math.radians(p2[1])
+
+    dlat = lat2 - lat1
+    dlon = math.radians(p2[0]-p1[0])
+
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2*math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return R*c
+
+
+def bearing(p1,p2):
+
+    lat1 = math.radians(p1[1])
+    lat2 = math.radians(p2[1])
+
+    dlon = math.radians(p2[0]-p1[0])
+
+    y = math.sin(dlon)*math.cos(lat2)
+    x = math.cos(lat1)*math.sin(lat2)-math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
+
+    brg = math.degrees(math.atan2(y,x))
+
+    return (brg+360)%360
+
+
+# --------------------------
+# CSV PROCESSING
+# --------------------------
 
 @app.route("/upload_csv", methods=["POST"])
 def upload_csv():
@@ -158,21 +219,21 @@ def upload_csv():
         lines = file.read().decode("utf-8").splitlines()
         reader = csv.DictReader(lines)
 
-        coords=[]
+        coords = []
 
         for row in reader:
 
-            e=float(row["E"])
-            n=float(row["N"])
+            e = float(row["E"])
+            n = float(row["N"])
 
-            lon,lat=transformer.transform(e,n)
+            lon,lat = transformer.transform(e,n)
 
-            lat+=LAT_CORR
-            lon+=LON_CORR
+            lat += LAT_CORR
+            lon += LON_CORR
 
             coords.append([lon,lat])
 
-        if coords[0]!=coords[-1]:
+        if coords[0] != coords[-1]:
             coords.append(coords[0])
 
         edges=[]
@@ -180,13 +241,13 @@ def upload_csv():
 
         for i in range(len(coords)-1):
 
-            p1=coords[i]
-            p2=coords[i+1]
+            p1 = coords[i]
+            p2 = coords[i+1]
 
-            dist=haversine(p1,p2)
-            brg=bearing(p1,p2)
+            dist = haversine(p1,p2)
+            brg = bearing(p1,p2)
 
-            perimeter+=dist
+            perimeter += dist
 
             edges.append({
                 "distance":round(dist,2),
@@ -203,10 +264,10 @@ def upload_csv():
             x2=coords[i+1][0]
             y2=coords[i+1][1]
 
-            area+=x1*y2-x2*y1
+            area += x1*y2 - x2*y1
 
-        area=abs(area)/2*12300000000
-        acre=area/4046.86
+        area = abs(area)/2*12300000000
+        acre = area/4046.86
 
         geojson={
             "type":"Feature",
@@ -223,14 +284,16 @@ def upload_csv():
             }
         }
 
-        return jsonify({
-            "polygon":geojson
-        })
+        return jsonify({"polygon":geojson})
 
     except Exception as e:
 
         return jsonify({"error":str(e)}),400
 
 
-if __name__=="__main__":
+# --------------------------
+# RUN
+# --------------------------
+
+if __name__ == "__main__":
     app.run(debug=True)
