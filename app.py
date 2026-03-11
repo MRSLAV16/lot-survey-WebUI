@@ -1,12 +1,15 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, abort
 import csv
 import sqlite3
 import math
 from pyproj import Transformer
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_wtf.csrf import CSRFProtect
 
 app = Flask(__name__)
 app.secret_key = "replace_with_secure_key"
+
+csrf = CSRFProtect(app)
 
 DB = "users.db"
 
@@ -21,27 +24,137 @@ LON_CORR = 0.000044
 # ---------------------------
 
 def get_db():
-    return sqlite3.connect(DB)
+    conn = sqlite3.connect(DB)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
 def init_db():
-
-    conn = get_db()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL
+        )
+        """)
+        conn.commit()
 
 
 init_db()
+
+
+# ---------------------------
+# AUTH ROUTES
+# ---------------------------
+
+@app.route("/login", methods=["GET","POST"])
+def login():
+
+    if request.method == "POST":
+
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if not username or not password:
+            return render_template("login.html", error="Missing credentials")
+
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT password FROM users WHERE username=?", (username,))
+            row = cur.fetchone()
+
+        if row and check_password_hash(row["password"], password):
+
+            session["user"] = username
+            return redirect(url_for("map_page"))
+
+        return render_template("login.html", error="Invalid login")
+
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET","POST"])
+def register():
+
+    if request.method == "POST":
+
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        if not username or not password:
+            return render_template("register.html", error="Missing fields")
+
+        if len(password) < 6:
+            return render_template("register.html", error="Password too short")
+
+        hashed = generate_password_hash(password)
+
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "INSERT INTO users(username,password) VALUES(?,?)",
+                    (username, hashed)
+                )
+                conn.commit()
+
+            return redirect(url_for("login"))
+
+        except sqlite3.IntegrityError:
+            return render_template("register.html", error="Username exists")
+
+    return render_template("register.html")
+
+
+@app.route("/change_password", methods=["GET","POST"])
+def change_password():
+
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+
+        new_password = request.form.get("password")
+
+        if not new_password or len(new_password) < 6:
+            return render_template("forgot.html", error="Invalid password")
+
+        hashed = generate_password_hash(new_password)
+
+        with get_db() as conn:
+            cur = conn.cursor()
+
+            cur.execute(
+                "UPDATE users SET password=? WHERE username=?",
+                (hashed, session["user"])
+            )
+
+            conn.commit()
+
+        return redirect(url_for("map_page"))
+
+    return render_template("forgot.html")
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------------------------
+# MAP PAGE
+# ---------------------------
+
+@app.route("/")
+def map_page():
+
+    if "user" not in session:
+        return redirect(url_for("login"))
+
+    return render_template("map.html", username=session["user"])
 
 
 # ---------------------------
@@ -80,113 +193,6 @@ def bearing(p1, p2):
 
 
 # ---------------------------
-# AUTH ROUTES
-# ---------------------------
-
-@app.route("/login", methods=["GET","POST"])
-def login():
-
-    if request.method == "POST":
-
-        username = request.form.get("username")
-        password = request.form.get("password")
-
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute("SELECT password FROM users WHERE username=?", (username,))
-        row = cur.fetchone()
-
-        conn.close()
-
-        if row and check_password_hash(row[0], password):
-
-            session["user"] = username
-            return redirect(url_for("map_page"))
-
-        return render_template("login.html", error="Invalid login")
-
-    return render_template("login.html")
-
-
-@app.route("/register", methods=["GET","POST"])
-def register():
-
-    if request.method == "POST":
-
-        username = request.form.get("username")
-        password = request.form.get("password")
-
-        hashed = generate_password_hash(password)
-
-        try:
-
-            conn = get_db()
-            cur = conn.cursor()
-
-            cur.execute(
-                "INSERT INTO users(username,password) VALUES(?,?)",
-                (username, hashed)
-            )
-
-            conn.commit()
-            conn.close()
-
-            return redirect(url_for("login"))
-
-        except:
-            return render_template("register.html", error="Username exists")
-
-    return render_template("register.html")
-
-
-@app.route("/forgot", methods=["GET","POST"])
-def forgot():
-
-    if request.method == "POST":
-
-        username = request.form.get("username")
-        new_password = request.form.get("password")
-
-        hashed = generate_password_hash(new_password)
-
-        conn = get_db()
-        cur = conn.cursor()
-
-        cur.execute(
-            "UPDATE users SET password=? WHERE username=?",
-            (hashed, username)
-        )
-
-        conn.commit()
-        conn.close()
-
-        return redirect(url_for("login"))
-
-    return render_template("forgot.html")
-
-
-@app.route("/logout")
-def logout():
-
-    session.clear()
-    return redirect(url_for("login"))
-
-
-# ---------------------------
-# MAP PAGE
-# ---------------------------
-
-@app.route("/")
-def map_page():
-
-    if "user" not in session:
-        return redirect(url_for("login"))
-
-    return render_template("map.html", username=session["user"])
-
-
-# ---------------------------
 # CSV UPLOAD
 # ---------------------------
 
@@ -194,7 +200,7 @@ def map_page():
 def upload_csv():
 
     if "user" not in session:
-        return jsonify({"error":"Unauthorized"}),401
+        abort(401)
 
     file = request.files.get("file")
 
@@ -271,14 +277,16 @@ def upload_csv():
             }
         }
 
-        return jsonify({
-            "polygon":geojson
-        })
+        return jsonify({"polygon":geojson})
 
     except Exception as e:
 
         return jsonify({"error":str(e)}),400
 
 
+# ---------------------------
+# RUN
+# ---------------------------
+
 if __name__=="__main__":
-    app.run(debug=True)
+    app.run()
