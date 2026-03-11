@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "chrome",
+            "request": "launch",
+            "name": "Launch Brave against localhost",
+            "url": "http://localhost:8080",
+            "webRoot": "${workspaceFolder}",
+            "runtimeExecutable": "/usr/bin/brave",
+            "runtimeArgs": [
+                "--remote-debugging-port=9222",
+                "--user-data-dir=${workspaceFolder}/.vscode/brave-debug"
+            ]
+        }
+    ]
+}

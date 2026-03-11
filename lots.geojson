@@ -1,0 +1,15 @@
+{
+"type": "FeatureCollection",
+"features": [
+{
+"type": "Feature",
+"properties": {
+"lot": "Lot 1234"
+},
+"geometry": {
+"type": "Polygon",
+"coordinates": [[[101.10,4.35],[101.11,4.35],[101.11,4.36],[101.10,4.36],[101.10,4.35]]]
+}
+}
+]
+}
