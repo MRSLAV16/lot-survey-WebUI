@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, redirect, url_for, session
 import csv
 import sqlite3
+import math
 from pyproj import Transformer
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -36,28 +37,59 @@ def init_db():
 init_db()
 
 
-@app.route("/login", methods=["GET", "POST"])
+def haversine(p1, p2):
+
+    R = 6371000
+
+    lat1 = math.radians(p1[1])
+    lat2 = math.radians(p2[1])
+
+    dlat = lat2 - lat1
+    dlon = math.radians(p2[0] - p1[0])
+
+    a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return R * c
+
+
+def bearing(p1, p2):
+
+    lat1 = math.radians(p1[1])
+    lat2 = math.radians(p2[1])
+
+    dlon = math.radians(p2[0] - p1[0])
+
+    y = math.sin(dlon) * math.cos(lat2)
+    x = math.cos(lat1)*math.sin(lat2) - math.sin(lat1)*math.cos(lat2)*math.cos(dlon)
+
+    brng = math.degrees(math.atan2(y, x))
+
+    return (brng + 360) % 360
+
+
+@app.route("/login", methods=["GET","POST"])
 def login():
 
     if request.method == "POST":
 
-        u = request.form.get("username")
-        p = request.form.get("password")
+        username = request.form.get("username")
+        password = request.form.get("password")
 
         conn = sqlite3.connect(DB)
         cur = conn.cursor()
 
-        cur.execute("SELECT password FROM users WHERE username=?", (u,))
+        cur.execute("SELECT password FROM users WHERE username=?", (username,))
         row = cur.fetchone()
 
         conn.close()
 
-        if row and check_password_hash(row[0], p):
+        if row and check_password_hash(row[0], password):
 
-            session["user"] = u
+            session["user"] = username
             return redirect(url_for("map_page"))
 
-        return render_template("login.html", error="Invalid username or password")
+        return render_template("login.html", error="Invalid login")
 
     return render_template("login.html")
 
@@ -79,7 +111,7 @@ def register():
 
             cur.execute(
                 "INSERT INTO users(username,password) VALUES(?,?)",
-                (username,hashed)
+                (username, hashed)
             )
 
             conn.commit()
@@ -89,7 +121,7 @@ def register():
 
         except:
 
-            return render_template("register.html", error="Username already exists")
+            return render_template("register.html", error="Username exists")
 
     return render_template("register.html")
 
@@ -107,68 +139,98 @@ def map_page():
     if "user" not in session:
         return redirect(url_for("login"))
 
-    return render_template("map.html")
+    return render_template("map.html", username=session["user"])
 
 
 @app.route("/upload_csv", methods=["POST"])
 def upload_csv():
 
     if "user" not in session:
-        return jsonify({"error": "Unauthorized"}), 401
+        return jsonify({"error":"Unauthorized"}),401
 
     file = request.files.get("file")
 
-    if not file or file.filename == "":
-        return jsonify({"error": "Invalid file"}), 400
+    if not file:
+        return jsonify({"error":"No file"}),400
 
     try:
 
         lines = file.read().decode("utf-8").splitlines()
         reader = csv.DictReader(lines)
 
-        coords = []
-        stations = []
+        coords=[]
 
         for row in reader:
 
-            e = float(row["E"])
-            n = float(row["N"])
+            e=float(row["E"])
+            n=float(row["N"])
 
-            lon, lat = transformer.transform(e, n)
+            lon,lat=transformer.transform(e,n)
 
-            lat += LAT_CORR
-            lon += LON_CORR
+            lat+=LAT_CORR
+            lon+=LON_CORR
 
-            coords.append([lon, lat])
+            coords.append([lon,lat])
 
-            if "STN" in row:
-
-                stations.append({
-                    "stn": row["STN"],
-                    "lat": lat,
-                    "lon": lon
-                })
-
-        if coords and coords[0] != coords[-1]:
+        if coords[0]!=coords[-1]:
             coords.append(coords[0])
 
-        polygon = {
-            "type": "Feature",
-            "geometry": {
-                "type": "Polygon",
-                "coordinates": [coords]
+        edges=[]
+        perimeter=0
+
+        for i in range(len(coords)-1):
+
+            p1=coords[i]
+            p2=coords[i+1]
+
+            dist=haversine(p1,p2)
+            brg=bearing(p1,p2)
+
+            perimeter+=dist
+
+            edges.append({
+                "distance":round(dist,2),
+                "bearing":round(brg,2)
+            })
+
+        area=0
+
+        for i in range(len(coords)-1):
+
+            x1=coords[i][0]
+            y1=coords[i][1]
+
+            x2=coords[i+1][0]
+            y2=coords[i+1][1]
+
+            area+=x1*y2-x2*y1
+
+        area=abs(area)/2*12300000000
+        acre=area/4046.86
+
+        geojson={
+            "type":"Feature",
+            "properties":{
+                "owner":session["user"],
+                "area_m2":round(area,2),
+                "acre":round(acre,4),
+                "perimeter":round(perimeter,2),
+                "edges":edges
+            },
+            "geometry":{
+                "type":"Polygon",
+                "coordinates":[coords]
             }
         }
 
         return jsonify({
-            "polygon": polygon,
-            "stations": stations
+            "polygon":geojson
         })
 
     except Exception as e:
 
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error":str(e)}),400
 
 
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run(debug=True)
